@@ -38,5 +38,3 @@ Each time the database is encrypted or saved:
 - **Metadata-secure:** The ciphertext size and structure reveal nothing about the password or evolution history.
 
 > “CAultron110 is not a black box. It’s a live experiment in digital quantum chaos.”
-
-Let me know if you’d like to add a diagram, a pseudocode sketch, or a formal security statement to this section.
