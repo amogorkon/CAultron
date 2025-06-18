@@ -19,7 +19,6 @@ def test_xor_blocks_multiple():
     a = bytes([0x0F] * 32)
     b = bytes([0xF0] * 32)
     c = bytes([0xFF] * 32)
-    # a ^ b ^ c = 0x0F ^ 0xF0 ^ 0xFF = 0x0F ^ 0xF0 = 0xFF, 0xFF ^ 0xFF = 0x00
     assert xor_blocks(a, b, c) == bytes([0x00] * 32)
 
 

@@ -59,7 +59,7 @@ def yield_chacha20_xor_stream(
 
 
 def chacha20_encrypt(
-    data: bytes, key: bytes, iv: bytes | None = None, position: int = 1
+    data: bytes, key: bytes, iv: bytes | None = None, position: int = 0
 ) -> bytes:
     """Encrypt (or decrypt) with the ChaCha20 cipher (12-byte nonce)."""
     assert isinstance(data, bytes), "Data must be bytes."
@@ -68,7 +68,9 @@ def chacha20_encrypt(
     if iv is None:
         iv = b"\0" * 12
     assert isinstance(iv, bytes), "IV/nonce must be bytes."
-    assert len(iv) == 12, "Nonce/IV must be 12 bytes (96 bits) for ChaCha20."
+    assert len(iv) == 12, (
+        f"Nonce/IV must be 12 bytes (96 bits) for ChaCha20, not {len(iv)}."
+    )
     assert isinstance(position, int), "Position/counter must be an integer."
     assert 0 <= position < 2**32, (
         "Position/counter must be a uint32 (0 <= position < 2**32)."

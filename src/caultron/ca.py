@@ -3,97 +3,83 @@ import secrets
 from functools import reduce
 
 import numpy as np
+from numba import njit
 
 from .chacha20 import chacha20_encrypt
 
 SEED = 32  # 32 bytes = 256 bits
 
 
-def generate_crypto_bitstream() -> bytes:
+def generate_salt() -> bytes:
     """
     Generate a cryptographically secure 32-byte (256-bit) bitstream suitable for XOR with a SHA-256 hash.
     """
     return secrets.token_bytes(32)
 
 
-def _init_state(
-    size: int,
-    secrets: list[bytes],
-    salt: bytes,
-    counter: int = 1,
-) -> np.ndarray:
-    """
-    Initialize a CA state as a numpy array of bits.
-    """
-    assert size > 256, "Universe size must be greater than 256 (seed size)."
-    assert size % 8 == 0, "Universe size must be a multiple of 8."
-    assert len(secrets) == 256, "Key must be exactly 256 bytes."
-    assert 1 <= counter <= 2**64 - 1, "Counter must be between 1 and 2^64 - 1."
-    assert isinstance(salt, bytes), "Salt must be a bytes object."
-    assert len(salt) == 256, "Salt must be exactly 256 bytes."
-    counter_block = hashlib.sha256(counter.to_bytes(8, "big")).digest()
-    seed = xor_blocks(*secrets, counter_block, salt)
-    keystream = chacha20_encrypt(bytes([0] * size), seed, b"\0" * 12, 1)
-    return np.frombuffer(keystream, dtype=np.uint8) & 1
-
-
-def evolve(bits: np.ndarray, seed: bytes) -> np.ndarray:
-    """
-    Evolve the CA state using a 32-byte seed. The meta-rule is derived as the first 4 bytes of the seed.
-    Returns a new numpy array of bits.
-    """
-    assert isinstance(bits, np.ndarray)
-    assert isinstance(seed, bytes) and len(seed) == 32, "Seed must be 32 bytes."
-    meta_rule = seed[:4]
-    rule_bits = int.from_bytes(meta_rule, "big")
-    # Decode meta-rule fields
-    core_rule = (rule_bits >> 20) & 0xFF  # bits 20-27
-    neighborhood_size = ((rule_bits >> 18) & 0x3) + 3  # bits 18-19, values 0-3 → 3-6
-    boundary = (rule_bits >> 17) & 0x1  # bit 17
-    inversion = (rule_bits >> 16) & 0x1  # bit 16
-    modulation = (rule_bits >> 8) & 0xFF  # bits 8-15
-    temporal = rule_bits & 0xFF  # bits 0-7
-
+@njit(cache=True)
+def _evolve_numba(bits, meta_rule_bytes):
+    # Manual big-endian conversion for 4 bytes
+    rule_bits = 0
+    for b in meta_rule_bytes:
+        rule_bits = (rule_bits << 8) | b
+    core_rule = (rule_bits >> 20) & 0xFF
+    neighborhood_size = ((rule_bits >> 18) & 0x3) + 3
+    boundary = (rule_bits >> 17) & 0x1
+    inversion = (rule_bits >> 16) & 0x1
+    modulation = (rule_bits >> 8) & 0xFF
+    temporal = rule_bits & 0xFF
     n = len(bits)
     new_bits = np.zeros_like(bits)
-    # Prepare rule table for the given neighborhood size
     rule_table_size = 2**neighborhood_size
-    # For 3-neighbor, use core_rule directly; for larger, expand core_rule with modulation
     if neighborhood_size == 3:
-        rule_table = [(core_rule >> i) & 1 for i in reversed(range(8))]
+        rule_table = np.array(
+            [(core_rule >> i) & 1 for i in range(7, -1, -1)], dtype=np.uint8
+        )
     else:
-        # Expand core_rule to fill rule_table_size using modulation as a mask or permutation
-        base = [(core_rule >> (i % 8)) & 1 for i in reversed(range(rule_table_size))]
-        mask = [(modulation >> (i % 8)) & 1 for i in reversed(range(rule_table_size))]
-        rule_table = [b ^ m for b, m in zip(base, mask)]
-
-    # Apply temporal: rotate rule_table by 'temporal' positions
+        base = np.array(
+            [(core_rule >> (i % 8)) & 1 for i in range(rule_table_size - 1, -1, -1)],
+            dtype=np.uint8,
+        )
+        mask = np.array(
+            [(modulation >> (i % 8)) & 1 for i in range(rule_table_size - 1, -1, -1)],
+            dtype=np.uint8,
+        )
+        rule_table = base ^ mask
     if temporal:
         temporal_mod = temporal % rule_table_size
-        rule_table = rule_table[temporal_mod:] + rule_table[:temporal_mod]
-
+        rule_table = np.concatenate((
+            rule_table[temporal_mod:],
+            rule_table[:temporal_mod],
+        ))
     for i in range(n):
-        # Get neighborhood
-        neighborhood = []
-        for j in range(-(neighborhood_size // 2), neighborhood_size // 2 + 1):
-            idx = i + j
-            if boundary == 0:  # Toroidal
+        idxs = np.empty(neighborhood_size, dtype=np.int64)
+        for j in range(neighborhood_size):
+            offset = j - (neighborhood_size // 2)
+            idx = i + offset
+            if boundary == 0:
                 idx = idx % n
             elif idx < 0 or idx >= n:
-                neighborhood.append(0)
+                idxs[j] = -1
                 continue
-            neighborhood.append(bits[idx])
-        # Convert neighborhood to index
-        idx = 0
-        for b in neighborhood:
-            idx = (idx << 1) | int(b)
-        idx = idx % rule_table_size
-        out_bit = rule_table[idx]
-        # Inversion
+            idxs[j] = idx
+        idx_val = 0
+        for j in range(neighborhood_size):
+            b = 0 if idxs[j] == -1 else bits[idxs[j]]
+            idx_val = (idx_val << 1) | int(b)
+        idx_val = idx_val % rule_table_size
+        out_bit = rule_table[idx_val]
         if inversion:
             out_bit ^= 1
         new_bits[i] = out_bit
     return new_bits
+
+
+def evolve(bits: np.ndarray, seed: bytes) -> np.ndarray:
+    assert isinstance(bits, np.ndarray)
+    assert isinstance(seed, bytes) and len(seed) == SEED, f"Seed must be {SEED} bytes."
+    meta_rule = seed[:4]
+    return _evolve_numba(bits, meta_rule)
 
 
 def inject_seed(bits: np.ndarray, seed: bytes, nonce: bytes = b"\0" * 12) -> np.ndarray:
@@ -102,53 +88,78 @@ def inject_seed(bits: np.ndarray, seed: bytes, nonce: bytes = b"\0" * 12) -> np.
     The seed must be 32 bytes (256 bits). Returns a new numpy array.
     """
     assert isinstance(bits, np.ndarray)
-    assert isinstance(seed, bytes) and len(seed) == SEED, f"Seed must be {SEED} bytes."
-    keystream = chacha20_encrypt(bytes([0] * len(bits)), seed, nonce, 1)
+    assert isinstance(seed, bytes) and len(seed) == SEED, (
+        f"Seed must be {SEED} bytes, not {len(seed)}."
+    )
+    keystream = chacha20_encrypt(bytes([0] * len(bits)), seed, nonce)
     keystream_bits = np.frombuffer(keystream, dtype=np.uint8) & 1
-    return bits ^ keystream_bits
+    return _xor_bits_numba(bits, keystream_bits)
+
+
+@njit(cache=True)
+def _xor_bits_numba(bits, keystream_bits):
+    n = len(bits)
+    out = np.empty_like(bits)
+    for i in range(n):
+        out[i] = bits[i] ^ keystream_bits[i]
+    return out
 
 
 def get_mid_end(seed: bytes) -> tuple[int, int]:
     """
-    Get the midpoint and endpoint bits from the seed.
+    Get the midpoint and endpoint from the end of the seed.
     Returns a tuple (midpoint_bits, endpoint_bits).
     """
     assert isinstance(seed, bytes) and len(seed) == SEED, f"Seed must be {SEED} bytes."
     seed_int = int.from_bytes(seed, "big")
-    a = max((seed_int >> 0) & 0b111111, 1)
-    b = max((seed_int >> 6) & 0b111111, 1)
+    a = max((seed_int >> 0) & 0b11111111, 1)
+    b = max((seed_int >> 8) & 0b11111111, 1)
+    if a == b:
+        a += 1
     return min(a, b), max(a, b)
 
 
-def derive_key(
-    secrets: list[bytes], salt: bytes, target_counter: int, size=1024
-) -> bytes:
-    """Evolve the universe up to the target counter and derive a key."""
+def derive_key(secrets: list[bytes], salt: bytes, counter: int, size=1024) -> bytes:
+    """Evolve the universe for the target counter and derive a key."""
     state = np.zeros(size, dtype=bool)
 
     midpoint = b""
     endpoint = b""
     seed = b""
 
-    for counter in range(1, target_counter + 1):
-        counter_block = hashlib.sha256(counter.to_bytes(8, "big")).digest()
-        seed = xor_blocks(*secrets, counter_block, salt)
-        state = inject_seed(state, seed)
-        mid, end = get_mid_end(seed)
+    counter_block = hashlib.sha256(counter.to_bytes(8, "big")).digest()
+    seed = xor_blocks(*secrets, counter_block, salt)
+    mid, end = get_mid_end(seed)
 
-        for i in range(1, end + 1):
-            if i == mid:
-                midpoint = _calculate_key(state)
-            state = evolve(state, seed)
-        endpoint = _calculate_key(state)
+    meta_rule = bytearray(seed[:4])
+    for i in range(1, end):
+        state = inject_seed(
+            state, seed, nonce=f"cnt={counter:04d}_step={i:04d}".encode()[:12]
+        )
+        prev_entropy = bit_entropy(state)
+        next_bits = _evolve_numba(state, meta_rule)
+        next_entropy = bit_entropy(next_bits)
+        if abs(next_entropy - prev_entropy) < 0.1:
+            # Rotate rule bits (meta_rule) by 1 bit to the left
+            rule_bits = int.from_bytes(meta_rule, "big")
+            rule_bits = ((rule_bits << 1) | (rule_bits >> 27)) & 0x0FFFFFFF  # 28 bits
+            meta_rule = rule_bits.to_bytes(4, "big")
+        state = next_bits
+        if i == mid:
+            if all(x == 0 for x in state):
+                state = inject_seed(state, seed, nonce=f"mid={i:<12}".encode()[:12])
+            midpoint = _calculate_key(state)
+
+    if all(x == 0 for x in state):
+        state = inject_seed(state, seed, nonce=f"end={counter:<12}".encode()[:12])
+    endpoint = _calculate_key(state)
 
     assert midpoint
     assert endpoint
-    if midpoint == endpoint:  # highly unlikely, but possible
+
+    if midpoint == endpoint:  # extremely unlikely, but possible
         return endpoint
-    if all(x == b"\0" for x in endpoint):  # again, extremely unlikely but possible
-        state = inject_seed(state, seed)
-        return _calculate_key(state)
+
     return bytes(x ^ y for x, y in zip(midpoint, endpoint))
 
 
@@ -156,7 +167,7 @@ def _calculate_key(bits: np.ndarray) -> bytes:
     """
     Derive a cryptographic key by hashing the full CA state with SHA-512.
     """
-    bitstring = "".join(map(str, bits.tolist()))
+    bitstring = "".join(map(str, bits.astype(np.uint8).tolist()))
     pad_len = (8 - len(bitstring) % 8) % 8
     bitstring += "0" * pad_len
     bytelist = [int(bitstring[i : i + 8], 2) for i in range(0, len(bitstring), 8)]
@@ -174,3 +185,19 @@ def xor_blocks(*blocks: bytes) -> bytes:
     assert all(len(s) == 32 for s in blocks), "All secrets must be 32 bytes (256 bits)."
 
     return reduce(lambda a, b: bytes(x ^ y for x, y in zip(a, b)), blocks)
+
+
+def prepare_secrets(*secrets: bytes | str) -> list[bytes]:
+    """
+    Prepare the secrets and derive a seed from them.
+    """
+    return [
+        hashlib.sha256(s.encode() if isinstance(s, str) else s).digest()
+        for s in secrets
+    ]
+
+
+def bit_entropy(state: np.ndarray) -> float:
+    """Shannon entropy of a CA state."""
+    p = np.mean(state)
+    return 0.0 if p in [0, 1] else -p * np.log2(p) - (1 - p) * np.log2(1 - p)
