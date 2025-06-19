@@ -1,0 +1,57 @@
+name: Publish to PyPI and PyPI+
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Build package
+        run: |
+          python -m build
+
+      - name: Check package
+        run: |
+          python -m twine check dist/*
+
+      - name: Publish to TestPyPI
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TWINE_USERNAME: ${{ secrets.TEST_PYPI_USERNAME }}
+          TWINE_PASSWORD: ${{ secrets.TEST_PYPI_PASSWORD }}
+        run: |
+          python -m twine upload --repository testpypi dist/*
+
+      - name: Publish to PyPI
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
+          TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+        run: |
+          python -m twine upload dist/*
+
+      - name: Publish to PyPI+
+        if: github.event_name == 'workflow_dispatch' && env.PYPI_PLUS_URL != ''
+        env:
+          TWINE_USERNAME: ${{ secrets.PYPI_PLUS_USERNAME }}
+          TWINE_PASSWORD: ${{ secrets.PYPI_PLUS_PASSWORD }}
+          PYPI_PLUS_URL: ${{ secrets.PYPI_PLUS_URL }}
+        run: |
+          python -m twine upload --repository-url $PYPI_PLUS_URL dist/*
