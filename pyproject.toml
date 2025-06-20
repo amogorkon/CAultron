@@ -1,3 +1,26 @@
+[tool.poetry]
+name = "caultron"
+version = "0.2.0"
+description = "Secure key derivation via Cellular Automata, Chacha20 and SHA. "
+authors = ["Anselm Kiefner <caultron-github@anselm.kiefner.de>"]
+license = "Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/anselm-kiefner/caultron"
+homepage = "https://github.com/anselm-kiefner/caultron"
+keywords = ["cryptography", "cellular automaton", "key derivation", "entropy", "quantum-inspired"]
+
+
+[tool.poetry.dependencies]
+python = ">=3.12"
+numpy = "*"
+numba = "*"
+matplotlib = "*"
+
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.2.2"
+
+
 [build-system]
-requires = ["setuptools>=42"]
-build-backend = "setuptools.build_meta"
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
