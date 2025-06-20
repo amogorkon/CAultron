@@ -7,7 +7,7 @@ license = "Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/anselm-kiefner/caultron"
 homepage = "https://github.com/anselm-kiefner/caultron"
-keywords = ["cryptography", "cellular automaton", "key derivation", "entropy", "quantum-inspired"]
+keywords = ["cryptography", "cellular automaton", "key derivation", "entropy"]
 
 
 [tool.poetry.dependencies]
