@@ -1,7 +1,7 @@
 
 # CAultron
 
-## 🧬 Quantum-Inspired, Adaptive Cryptographic Cellular Automaton
+## 🧬 Cryptographic Cellular Automaton
 
 CAultron is a cryptographic key derivation and analysis toolkit based on a 1D cellular automaton (CA) with adaptive, entropy-driven evolution. It is designed for research, security, and educational use.
 
