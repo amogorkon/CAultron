@@ -73,13 +73,10 @@ flowchart TD
 
 ---
 
-All mechanisms are deterministic and reproducible for the same inputs, with minimal memory footprint and high theoretical entropy.
+All mechanisms are deterministic and reproducible for the same inputs, with minimal memory footprint and high theoretical entropy while forcing an attacker to perform excessive computations to predict the CA state.
 
 
 ## System Overview
-
-
-
 CAultron is a cryptographic engine based on a 1D elementary cellular automaton, where the rule is dynamically selected by the first 8 bits of the derived seed (allowing any rule 0–255). The system uses a single universe. All seed injection and per-key-derivation-step entropy is performed via ChaCha20 output.
 
 **Key-Derivation Process:**

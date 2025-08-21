@@ -1,13 +1,16 @@
-[tool.poetry]
+[project]
 name = "caultron"
-version = "0.2.0"
+version = "2025.34"
 description = "Secure key derivation via Cellular Automata, Chacha20 and SHA. "
 authors = ["Anselm Kiefner <caultron-github@anselm.kiefner.de>"]
 license = "Apache-2.0"
 readme = "README.md"
-repository = "https://github.com/anselm-kiefner/caultron"
-homepage = "https://github.com/anselm-kiefner/caultron"
+repository = "https://github.com/amogorkon/caultron"
 keywords = ["cryptography", "cellular automaton", "key derivation", "entropy"]
+
+packages = [
+  { include = "caultron", from = "src" }
+]
 
 
 [tool.poetry.dependencies]
